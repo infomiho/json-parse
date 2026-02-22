@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Streaming JSON Parser Demo</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222532;
+    --border: #2a2d3a;
+    --text: #e1e4ed;
+    --muted: #6b7084;
+    --accent: #6c8cff;
+    --green: #4ade80;
+    --yellow: #facc15;
+    --pink: #f472b6;
+    --orange: #fb923c;
+    --font-mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-mono);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--accent);
+    margin-right: auto;
+  }
+
+  .status {
+    font-size: 0.75rem;
+    color: var(--muted);
+    min-width: 5rem;
+    text-align: center;
+  }
+  .status.active { color: var(--green); }
+  .status.paused { color: var(--yellow); }
+
+  button {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    padding: 0.4rem 1rem;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .btn-accent {
+    border: 1px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+  }
+  .btn-accent:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+
+  .btn-yellow {
+    border: 1px solid var(--yellow);
+    background: color-mix(in srgb, var(--yellow) 10%, transparent);
+    color: var(--yellow);
+  }
+  .btn-yellow:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--yellow) 25%, transparent);
+  }
+  .btn-yellow.is-paused {
+    border-color: var(--green);
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 10%, transparent);
+  }
+
+  .btn-orange {
+    border: 1px solid var(--orange);
+    background: color-mix(in srgb, var(--orange) 10%, transparent);
+    color: var(--orange);
+  }
+  .btn-orange:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--orange) 25%, transparent);
+  }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr auto;
+    gap: 1px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .panel {
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 0.6rem 1rem;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.75rem 1rem;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .panel-body::-webkit-scrollbar       { width: 5px; }
+  .panel-body::-webkit-scrollbar-track  { background: transparent; }
+  .panel-body::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 3px; }
+
+  #rawBody { word-break: break-all; }
+
+  .raw-received { color: color-mix(in srgb, var(--text) 55%, transparent); }
+  .raw-chunk {
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 12%, transparent);
+    border-radius: 2px;
+  }
+  .raw-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    background: var(--green);
+    vertical-align: text-bottom;
+    animation: blink 0.8s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .algo-panel { grid-column: 1 / -1; }
+
+  .algo-grid {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr;
+    gap: 0.4rem 1.2rem;
+    align-items: start;
+  }
+
+  .algo-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    padding-top: 0.15rem;
+    white-space: nowrap;
+  }
+
+  .algo-value { font-size: 0.75rem; min-height: 1.4rem; }
+
+  .stack-item {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    margin-right: 0.25rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .stack-item.obj { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--accent); }
+  .stack-item.arr { background: color-mix(in srgb, var(--pink) 25%, transparent); color: var(--pink); }
+
+  .flag-on  { color: var(--yellow); font-weight: 600; }
+  .flag-off { color: var(--muted); }
+
+  .step-list { list-style: none; display: flex; flex-wrap: wrap; gap: 0.3rem; }
+  .step-list li {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+  }
+  .step-label    { color: var(--text); }
+  .step-appended { color: var(--green); margin-left: 0.3rem; }
+
+  .completed-json {
+    font-size: 0.7rem;
+    padding: 0.4rem 0.6rem;
+    background: color-mix(in srgb, var(--green) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--green) 20%, transparent);
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 3.5rem;
+    overflow-y: auto;
+    grid-column: 2 / -1;
+  }
+
+  .key-suppressed {
+    font-size: 0.65rem;
+    color: var(--orange);
+    font-weight: 600;
+    margin-left: 0.6rem;
+  }
+
+  .json-key     { color: var(--accent); }
+  .json-string  { color: var(--green); }
+  .json-number  { color: var(--yellow); }
+  .json-bool    { color: var(--pink); }
+  .json-null    { color: var(--muted); }
+  .json-bracket { color: var(--muted); }
+
+  .shape-dim     { opacity: 0.25; }
+  .shape-partial { opacity: 0.7; color: var(--yellow); }
+  .shape-present { opacity: 1.0; }
+  .zod-method    { color: var(--accent); }
+  .zod-type      { color: var(--pink); }
+  .zod-key       { color: var(--accent); }
+  .zod-bracket   { color: var(--muted); }
+
+  .empty-state { color: var(--muted); font-size: 0.7rem; font-style: italic; }
+</style>
+<script type="importmap">
+{ "imports": { "zod": "https://esm.sh/zod@3.24" } }
+</script>
+</head>
+<body>
+
+<header>
+  <h1>Streaming JSON Parser</h1>
+  <span class="status" id="status">idle</span>
+  <button class="btn-orange" id="stepBtn" disabled>Step</button>
+  <button class="btn-yellow" id="pauseBtn" disabled>Pause</button>
+  <button class="btn-accent" id="startBtn">Start Stream</button>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="panel-header">Raw input received</div>
+    <div class="panel-body" id="rawBody">
+      <span class="empty-state">Click "Start Stream" to begin</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">Zod Schema</div>
+    <div class="panel-body" id="schemaBody">
+      <span class="empty-state">Full schema will appear here</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">Parsed object (live)</div>
+    <div class="panel-body" id="parsedBody">
+      <span class="empty-state">Waiting for data...</span>
+    </div>
+  </div>
+
+  <div class="panel algo-panel">
+    <div class="panel-header">Algorithm state</div>
+    <div class="panel-body">
+      <div class="algo-grid">
+        <span class="algo-label">Stack</span>
+        <span class="algo-value" id="algoStack"></span>
+        <span class="algo-label">In string?</span>
+        <span class="algo-value" id="algoInString"></span>
+        <span class="algo-label">Steps</span>
+        <span class="algo-value" id="algoSteps"></span>
+        <span class="algo-label">Auto-closed</span>
+        <div class="completed-json" id="algoCompleted"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+import { jsonReaderDebug } from "./json-reader.js";
+import { z } from "zod";
+
+const ResponseSchema = z.object({
+	id: z.string(),
+	object: z.string(),
+	model: z.string(),
+	choices: z.array(
+		z.object({
+			index: z.number(),
+			message: z.object({
+				role: z.string(),
+				content: z.string(),
+				tool_calls: z.array(
+					z.object({
+						id: z.string(),
+						type: z.string(),
+						function: z.object({
+							name: z.string(),
+							arguments: z.string(),
+						}),
+					}),
+				),
+			}),
+			finish_reason: z.string(),
+		}),
+	),
+	usage: z.object({
+		prompt_tokens: z.number(),
+		completion_tokens: z.number(),
+		total_tokens: z.number(),
+	}),
+});
+
+const SAMPLE = JSON.stringify(
+	{
+		id: "chatcmpl-9a1b2c3d",
+		object: "chat.completion.chunk",
+		model: "gpt-4o",
+		choices: [
+			{
+				index: 0,
+				message: {
+					role: "assistant",
+					content: "Here is a quick summary of the data you requested.",
+					tool_calls: [
+						{
+							id: "call_abc123",
+							type: "function",
+							function: {
+								name: "get_weather",
+								arguments: '{"location":"San Francisco","units":"celsius"}',
+							},
+						},
+					],
+				},
+				finish_reason: "tool_calls",
+			},
+		],
+		usage: { prompt_tokens: 42, completion_tokens: 128, total_tokens: 170 },
+	},
+	null,
+	2,
+);
+
+const el = (id) => document.getElementById(id);
+
+const startBtn = el("startBtn");
+const pauseBtn = el("pauseBtn");
+const stepBtn = el("stepBtn");
+const statusEl = el("status");
+const rawBody = el("rawBody");
+const schemaBody = el("schemaBody");
+const parsedBody = el("parsedBody");
+const algoStack = el("algoStack");
+const algoInString = el("algoInString");
+const algoSteps = el("algoSteps");
+const algoCompleted = el("algoCompleted");
+
+let paused = false;
+let stepOnce = false;
+let pauseResolve = null;
+
+function setPaused(value) {
+	paused = value;
+	pauseBtn.textContent = paused ? "Resume" : "Pause";
+	pauseBtn.classList.toggle("is-paused", paused);
+	stepBtn.disabled = !paused;
+	statusEl.textContent = paused ? "paused" : "streaming...";
+	statusEl.className = `status ${paused ? "paused" : "active"}`;
+}
+
+function resume() {
+	if (!pauseResolve) return;
+	const r = pauseResolve;
+	pauseResolve = null;
+	r();
+}
+
+function waitIfPaused() {
+	if (!paused) return Promise.resolve();
+	return new Promise((resolve) => {
+		pauseResolve = resolve;
+	});
+}
+
+pauseBtn.addEventListener("click", () => {
+	setPaused(!paused);
+	if (!paused) resume();
+});
+
+stepBtn.addEventListener("click", () => {
+	stepOnce = true;
+	resume();
+});
+
+const CHUNK_SIZE = 3;
+const CHUNK_DELAY = 30;
+
+function createChunkedStream(text) {
+	let offset = 0;
+	return new ReadableStream({
+		async pull(controller) {
+			if (offset >= text.length) {
+				controller.close();
+				return;
+			}
+			const slice = text.slice(offset, offset + CHUNK_SIZE);
+			offset += CHUNK_SIZE;
+			controller.enqueue(new TextEncoder().encode(slice));
+			await new Promise((r) => setTimeout(r, CHUNK_DELAY));
+		},
+	});
+}
+
+startBtn.addEventListener("click", run);
+
+async function run() {
+	startBtn.disabled = true;
+	pauseBtn.disabled = false;
+	stepOnce = false;
+	setPaused(false);
+
+	rawBody.innerHTML = "";
+	schemaBody.innerHTML = renderSchema(ResponseSchema, undefined);
+	parsedBody.innerHTML = "";
+	renderAlgo(null);
+
+	const reader = createChunkedStream(SAMPLE).getReader();
+
+	for await (const frame of jsonReaderDebug(reader)) {
+		await waitIfPaused();
+
+		renderRaw(frame);
+		renderAlgo(frame);
+		renderParsed(frame.parsed);
+		schemaBody.innerHTML = renderSchema(ResponseSchema, frame.parsed);
+
+		if (stepOnce) {
+			stepOnce = false;
+			setPaused(true);
+		}
+	}
+
+	statusEl.textContent = "done";
+	statusEl.className = "status";
+	pauseBtn.disabled = true;
+	stepBtn.disabled = true;
+	startBtn.disabled = false;
+}
+
+function renderRaw({ raw, chunk }) {
+	const prev = raw.slice(0, raw.length - chunk.length);
+	rawBody.innerHTML =
+		`<span class="raw-received">${esc(prev)}</span>` +
+		`<span class="raw-chunk">${esc(chunk)}</span>` +
+		`<span class="raw-cursor"></span>`;
+	rawBody.scrollTop = rawBody.scrollHeight;
+}
+
+function renderAlgo(frame) {
+	if (!frame) {
+		algoStack.innerHTML = empty("empty");
+		algoInString.innerHTML = '<span class="flag-off">no</span>';
+		algoSteps.innerHTML = empty("none");
+		algoCompleted.innerHTML = empty("...");
+		return;
+	}
+
+	algoStack.innerHTML =
+		frame.stack.length === 0
+			? empty("empty")
+			: frame.stack
+					.map((s) => {
+						const kind = s === "{" ? "obj" : "arr";
+						return `<span class="stack-item ${kind}">${s} ${kind}</span>`;
+					})
+					.join("");
+
+	let inStringHtml = frame.inString
+		? '<span class="flag-on">YES &mdash; string is open</span>'
+		: '<span class="flag-off">no</span>';
+	if (frame.partialKey) {
+		inStringHtml += '<span class="key-suppressed">KEY SUPPRESSED</span>';
+	}
+	algoInString.innerHTML = inStringHtml;
+
+	algoSteps.innerHTML =
+		frame.steps.length === 0
+			? empty("none needed")
+			: "<ul class='step-list'>" +
+				frame.steps
+					.map(
+						(s) =>
+							`<li><span class="step-label">${esc(s.label)}</span>` +
+							` <span class="step-appended">${esc(s.appended)}</span></li>`,
+					)
+					.join("") +
+				"</ul>";
+
+	algoCompleted.textContent = frame.completed;
+}
+
+function renderParsed(obj) {
+	parsedBody.innerHTML = highlightJson(JSON.stringify(obj, null, 2));
+}
+
+const ZOD_LABELS = {
+	ZodString: "string",
+	ZodNumber: "number",
+	ZodBoolean: "boolean",
+	ZodNull: "null",
+	ZodAny: "any",
+};
+
+function zodTag(typeName) {
+	const label = ZOD_LABELS[typeName] ?? "unknown";
+	return `<span class="zod-method">z</span>.<span class="zod-type">${label}</span>()`;
+}
+
+function fieldStatus(schema, value) {
+	if (value === undefined) return "shape-dim";
+	return schema.safeParse(value).success ? "shape-present" : "shape-partial";
+}
+
+function asObject(value) {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? value
+		: undefined;
+}
+
+function renderSchema(schema, partial) {
+	const lines = [];
+	walkZod(schema, partial, "", lines, true);
+	return lines.join("\n");
+}
+
+function walkZod(schema, partial, indent, lines, isLast) {
+	const comma = isLast ? "" : ",";
+	const typeName = schema._def.typeName;
+
+	if (typeName === "ZodObject") {
+		const shape = schema.shape;
+		const keys = Object.keys(shape);
+		const obj = asObject(partial);
+		const cls = obj !== undefined ? "shape-present" : "shape-dim";
+
+		lines.push(
+			`<span class="${cls}">${indent}<span class="zod-method">z</span>.<span class="zod-type">object</span>(<span class="zod-bracket">{</span></span>`,
+		);
+
+		keys.forEach((key, i) => {
+			const child = shape[key];
+			const isLastKey = i === keys.length - 1;
+			const keyComma = isLastKey ? "" : ",";
+			const hasKey = obj !== undefined && key in obj;
+			const childVal = hasKey ? obj[key] : undefined;
+			const childType = child._def.typeName;
+
+			if (childType === "ZodObject" || childType === "ZodArray") {
+				const keyCls = hasKey ? "shape-present" : "shape-dim";
+				lines.push(
+					`<span class="${keyCls}">${indent}  <span class="zod-key">${esc(key)}</span>:</span>`,
+				);
+				const sub = [];
+				walkZod(child, childVal, indent + "  ", sub, true);
+				if (!isLastKey && sub.length > 0) {
+					sub[sub.length - 1] = sub[sub.length - 1].replace(
+						/<\/span>$/,
+						keyComma + "</span>",
+					);
+				}
+				lines.push(...sub);
+			} else {
+				const valCls = hasKey ? fieldStatus(child, childVal) : "shape-dim";
+				lines.push(
+					`<span class="${valCls}">${indent}  <span class="zod-key">${esc(key)}</span>: ${zodTag(childType)}${keyComma}</span>`,
+				);
+			}
+		});
+
+		lines.push(
+			`<span class="${cls}">${indent}<span class="zod-bracket">}</span>)${comma}</span>`,
+		);
+		return;
+	}
+
+	if (typeName === "ZodArray") {
+		const elemSchema = schema._def.type;
+		const arr = Array.isArray(partial) ? partial : undefined;
+		const cls = arr !== undefined ? "shape-present" : "shape-dim";
+		const elemPartial = arr?.[0];
+
+		lines.push(
+			`<span class="${cls}">${indent}<span class="zod-method">z</span>.<span class="zod-type">array</span>(</span>`,
+		);
+		walkZod(elemSchema, elemPartial, indent + "  ", lines, true);
+		lines.push(`<span class="${cls}">${indent})${comma}</span>`);
+		return;
+	}
+
+	const cls = fieldStatus(schema, partial);
+	lines.push(
+		`<span class="${cls}">${indent}${zodTag(typeName)}${comma}</span>`,
+	);
+}
+
+function esc(str) {
+	return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function empty(text) {
+	return `<span class="empty-state">${text}</span>`;
+}
+
+function highlightJson(json) {
+	return json
+		.replace(/("(?:\\.|[^"\\])*")\s*:/g, '<span class="json-key">$1</span>:')
+		.replace(
+			/:\s*("(?:\\.|[^"\\])*")/g,
+			': <span class="json-string">$1</span>',
+		)
+		.replace(/:\s*(\d+(?:\.\d+)?)/g, ': <span class="json-number">$1</span>')
+		.replace(/:\s*(true|false)/g, ': <span class="json-bool">$1</span>')
+		.replace(/:\s*(null)/g, ': <span class="json-null">$1</span>')
+		.replace(/([[\]{}])/g, '<span class="json-bracket">$1</span>');
+}
+</script>
+
+</body>
+</html>
